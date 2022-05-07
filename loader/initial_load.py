@@ -23,8 +23,8 @@ class Loader:
             f.write(filedata)
 
     def loaderUpdateFiles(self):
-        self.renameFiles()
-        self.updateImport()
+        self.__renameFiles()
+        self.__updateImport()
 
 loader = Loader(input('Enter new project name: '))
 loader.loaderUpdateFiles()
