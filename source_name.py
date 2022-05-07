@@ -31,17 +31,40 @@ class Handler(Extract, GetPages):
     def getpages(self, searchquery):
         result = []
         link_1 = 'https://www.value.today/'
-        self.get_working_tree_api(link_1, 'tree')
+        self.setWorkingTreeApi(link_1, 'tree')
         link_2 = 'https://www.value.today/views/ajax?_wrapper_format=drupal_ajax'
         # '[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")'
         link_new = f'https://www.value.today/?title={searchquery}&field_company_category_primary_target_id=&field_headquarters_of_company_target_id=All&field_company_website_uri=&field_market_value_jan072022_value='
-        self.get_working_tree_api(link_new, 'tree')
-        result = self.get_by_xpath('//h2/a/@href')
+        self.setWorkingTreeApi(link_new, 'tree')
+        result = self.getByXpath('//h2/a/@href')
         result = [self.base_url + i for i in result]
 
         return result
 
-    def get_by_xpath(self, xpath):
+    def setWorkingTreeApi(self, link_name, type, method='GET', data=None): # reduce arguments
+        if type == 'tree':
+            if data:
+                self.tree = self.get_tree(link_name,
+                                          headers=self.header, method=method, data=data)
+            else:
+                self.tree = self.get_tree(link_name,
+                                          headers=self.header, method=method)
+        if type == 'api':
+            if data:
+                # self.api = self.get_content(link_name,
+                #                             headers=self.header, method=method, data=json.dumps(data))
+                # print(self.api)
+                self.api = self.get_content(link_name,
+                                            headers=self.header, method=method, data=data)
+                # print(self.api)
+            else:
+                self.api = self.get_content(link_name,
+                                            headers=self.header, method=method)
+            # print(self.api.content)
+            self.api = self.api.content
+            # self.api = json.loads(self.api.content)
+
+    def getByXpath(self, xpath):
         try:
             el = self.tree.xpath(xpath)
         except Exception as e:
@@ -57,278 +80,69 @@ class Handler(Extract, GetPages):
         else:
             return None
 
-    def reformat_date(self, date, format):
-        date = datetime.datetime.strptime(date.strip(), format).strftime('%Y-%m-%d')
-        return date
-
-    def fill_business_classifier(self, xpathCodes=None, xpathDesc=None, xpathLabels=None, api=False):
-        res = []
-        length = None
-        codes, desc, labels = None, None, None
-
-        if xpathCodes:
-            codes = self.get_by_xpath(xpathCodes) if not api else [self.get_by_api(xpathCodes)]
-            if codes:
-                length = len(codes)
-        if xpathDesc:
-            desc = self.get_by_xpath(xpathDesc) if not api else [self.get_by_api(xpathDesc)]
-            if desc:
-                length = len(desc)
-        if xpathLabels:
-            labels = self.get_by_xpath(xpathLabels) if not api else [self.get_by_api(xpathLabels)]
-            if labels:
-                length = len(labels)
-
-        if length:
-            for i in range(length):
-                temp = {
-                    'code': codes[i] if codes else '',
-                    'description': desc[i] if desc else '',
-                    'label': labels[i] if labels else ''
-                }
-                res.append(temp)
-        if res:
-            self.overview['bst:businessClassifier'] = res
-
-    def get_post_addr(self, tree):
-        addr = self.get_by_xpath(tree, '//span[@id="lblMailingAddress"]/..//text()', return_list=True)
-        if addr:
-            addr = [i for i in addr if
-                    i != '' and i != 'Mailing Address:' and i != 'Inactive' and i != 'Registered Office outside NL:']
-            if addr[0] == 'No address on file':
-                return None
-            if addr[0] == 'Same as Registered Office' or addr[0] == 'Same as Registered Office in NL':
-                return 'Same'
-            fullAddr = ', '.join(addr)
-            temp = {
-                'fullAddress': fullAddr if 'Canada' in fullAddr else (fullAddr + ' Canada'),
-                'country': 'Canada',
-
-            }
-            replace = re.findall('[A-Z]{2},\sCanada,', temp['fullAddress'])
-            if not replace:
-                replace = re.findall('[A-Z]{2},\sCanada', temp['fullAddress'])
-            if replace:
-                torepl = replace[0].replace(',', '')
-                temp['fullAddress'] = temp['fullAddress'].replace(replace[0], torepl)
-            try:
-                zip = re.findall('[A-Z]\d[A-Z]\s\d[A-Z]\d', fullAddr)
-                if zip:
-                    temp['zip'] = zip[0]
-            except:
-                pass
-        # print(addr)
-        # print(len(addr))
-        if len(addr) == 4:
-            temp['city'] = addr[-3]
-            temp['streetAddress'] = addr[0]
-        if len(addr) == 5:
-            temp['city'] = addr[-4]
-            temp['streetAddress'] = addr[0]
-        if len(addr) == 6:
-            temp['city'] = addr[-4]
-            temp['streetAddress'] = ', '.join(addr[:2])
-
-        return temp
-
-    def get_address(self, xpath=None, zipPattern=None, key=None, returnAddress=False, addr=None):
-        if xpath:
-            addr = self.get_by_xpath(xpath)
-        if key:
-            addr = self.get_by_api(key)
-        if addr:
-            if type(addr) == list:
-                splittedAddr = addr
-                addr = ', '.join(addr)
-
-            addr = addr.replace('\n', ' ')
-            addr = addr[0] if type(addr) == list else addr
-            temp = {
-                # 'fullAddress': addr,
-                'country': splittedAddr[-2]
-            }
-            if zipPattern:
-                zip = re.findall(zipPattern, addr)
-                if zip:
-                    temp['zip'] = zip[0]
-
-            try:
-                temp['zip'] = splittedAddr[-1]
-            except:
-                pass
-            try:
-                temp['city'] = splittedAddr[-3]
-            except:
-                pass
-            try:
-                temp['streetAddress'] = ' '.join(splittedAddr[:-3])
-            except:
-                pass
-            try:
-                temp['fullAddress'] = ' '.join(splittedAddr)
-            except:
-                pass
-            try:
-                patterns = ['Suite\s\d+']
-                for pattern in patterns:
-                    pat = re.findall(pattern, addr)
-                    if pat:
-                        first_part = addr.split(pat[0])
-                        temp['streetAddress'] = first_part[0] + pat[0]
-            except:
-                pass
-            # try:
-            #     street = addr.split('Street')
-            #     # print(street)
-            #     if len(street) == 2:
-            #         temp['streetAddress'] = street[0] + 'Street'
-            #     else:
-            #         temp['streetAddress'] = ''.join(addr.split(',')[0:2])
-            #
-            #     # if temp['streetAddress']:
-            #     #     temp['streetAddress'] = splitted_addr[0]
-            # except:
-            #     pass
-            # try:
-            #     # city = addr.replace(temp['zip'], '')
-            #     # city = city.replace(temp['streetAddress'], '')
-            #     # city = city.replace(',', '').strip()
-            #     # city = re.findall('[A-Z][a-z]+', city)
-            #     temp['city'] = addr.split(', ')[-1].replace('.', '')
-            #     # temp['fullAddress'] += f", {temp['city']}"
-            # except:
-            #     pass
-            # temp['fullAddress'] += f', {temp["country"]}'
-            # temp['country'] = 'Nigeria'
-
-            # temp['fullAddress'] = temp['fullAddress'].replace('.,', ',')
-            if returnAddress:
-                return temp
-            self.overview['mdaas:RegisteredAddress'] = temp
-
-    def get_operational_address(self, xpath=None, zipPattern=None, key=None, returnAddress=False, addr=None):
-        if xpath:
-            addr = self.get_by_xpath(xpath)
-        if key:
-            addr = self.get_by_api(key)
-        if addr:
-            if type(addr) == list:
-                splittedAddr = addr
-                addr = ', '.join(addr)
-
-            addr = addr.replace('\n', ' ')
-            addr = addr[0] if type(addr) == list else addr
-            temp = {
-                # 'fullAddress': addr,
-                'country': splittedAddr[-2]
-            }
-            if zipPattern:
-                zip = re.findall(zipPattern, addr)
-                if zip:
-                    temp['zip'] = zip[0]
-
-            try:
-                temp['zip'] = splittedAddr[-1]
-            except:
-                pass
-            try:
-                temp['city'] = splittedAddr[-3]
-            except:
-                pass
-            try:
-                temp['streetAddress'] = ' '.join(splittedAddr[:-3])
-            except:
-                pass
-            try:
-                temp['fullAddress'] = ' '.join(splittedAddr)
-            except:
-                pass
-            try:
-                patterns = ['Suite\s\d+']
-                for pattern in patterns:
-                    pat = re.findall(pattern, addr)
-                    if pat:
-                        first_part = addr.split(pat[0])
-                        temp['streetAddress'] = first_part[0] + pat[0]
-            except:
-                pass
-            # try:
-            #     street = addr.split('Street')
-            #     # print(street)
-            #     if len(street) == 2:
-            #         temp['streetAddress'] = street[0] + 'Street'
-            #     else:
-            #         temp['streetAddress'] = ''.join(addr.split(',')[0:2])
-            #
-            #     # if temp['streetAddress']:
-            #     #     temp['streetAddress'] = splitted_addr[0]
-            # except:
-            #     pass
-            # try:
-            #     # city = addr.replace(temp['zip'], '')
-            #     # city = city.replace(temp['streetAddress'], '')
-            #     # city = city.replace(',', '').strip()
-            #     # city = re.findall('[A-Z][a-z]+', city)
-            #     temp['city'] = addr.split(', ')[-1].replace('.', '')
-            #     # temp['fullAddress'] += f", {temp['city']}"
-            # except:
-            #     pass
-            # temp['fullAddress'] += f', {temp["country"]}'
-            # temp['country'] = 'Nigeria'
-
-            # temp['fullAddress'] = temp['fullAddress'].replace('.,', ',')
-            if returnAddress:
-                return temp
-            self.overview['mdaas:OperationalAddress'] = temp
-
-    def get_prev_names(self, tree):
-        prev = []
-        names = self.get_by_xpath(tree,
-                                  '//table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="row"]//td[1]/text() | //table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="rowalt"]//td[1]/text()',
-                                  return_list=True)
-        dates = self.get_by_xpath(tree,
-                                  '//table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="row"]//td[2]/span/text() | //table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="rowalt"]//td[2]/span/text()',
-                                  return_list=True)
-        print(names)
-        if names:
-            names = [i for i in names if i != '']
-        if names and dates:
-            for name, date in zip(names, dates):
-                temp = {
-                    'name': name,
-                    'valid_to': date
-                }
-                prev.append(temp)
-        return prev
-
-    def get_by_api(self, key):
+    def getByApi(self, key):
         try:
             el = self.api[key]
             return el
         except:
             return None
 
-    def getPathType(self, dataPath):
-        if dataPath[:2] == '//':
-            return 'xpath'
-        elif dataPath == 'defaultFill':
-            return 'defaultFill'
-        else:
-            return 'key'
+    def getHiddenValuesASP(self):
+        names = self.getByXpath('//input[@type="hidden"]/@name')
+        temp = {}
+        for name in names:
+            value = self.getByXpath(f'//input[@type="hidden"]/@name[contains(., "{name}")]/../@value')
+            temp[name] = value[0] if value else ''
+        return temp
 
+    def checkTree(self):
+        print(self.tree.xpath('//text()'))
+
+
+
+    def get_overview(self, link):
+        self.overview = {}
+        self.setWorkingTreeApi(link, 'tree')
+
+        requiredFieldsMap = {
+            'isDomiciledIn': '//text()[contains(., "Headquarters Country")]/../following-sibling::div[1]//text()',
+            'vcard:organization-name': '//h1/a/text()',
+            'hasLatestOrganizationFoundedDate': '//text()[contains(., "Founded Year")]/../following-sibling::div[1]//text()',
+            'logo': '//div[@class="clearfix col-sm-12 field field--name-field-company-logo-lc field--type-image field--label-hidden field--item"]/a/img/@src',
+            'hasURL': '//text()[contains(., "Company Website:")]/../following-sibling::div[1]/a/@href',
+            'bst:description': '//text()[contains(., "About Company Business:")]/../following-sibling::div[1]//text()',
+            'registeredIn': '//text()[contains(., "Headquarters Region")]/../following-sibling::div[1]//text()',
+            'bst:stock_info': '//text()[contains(., "Stock Exchange")]/../following-sibling::div[1]//text()',
+            'size': '//text()[contains(., "Number of Employees")]/../following-sibling::div[1]//text()',
+            'Service': '//div[@class="clearfix group-left"]/div//text()[contains(., "Company Business")]/../following-sibling::div[1]//text()',
+        }
+
+        hardCodedFields = {
+            'bst:registryURI': link
+        }
+        self.extractData(requiredFieldsMap, hardCodedFields)
+        return self.overview
+
+
+    def extractData(self, requiredFields, hardCodedFields):
+        for k, v in requiredFields.items():
+            self.fillField(k, v)
+
+        for k, v in hardCodedFields.items():
+            self.overview[k] = v
 
     def fillField(self, fieldName, dataPath=None, reformatDate=None, el=None):
         dataType = self.getPathType(dataPath)
         if dataType == 'xpath':
-            el = self.get_by_xpath(dataPath)
+            el = self.getByXpath(dataPath)
         if dataType == 'key':
-            el = self.get_by_api(dataPath)
+            el = self.getByApi(dataPath)
         if dataType == 'defaultFill':
             el = dataPath
         if el:
             if len(el) == 1:
                 el = el[0]
-            el = self.reformat_date(el, reformatDate) if reformatDate else el
+            el = self.reformatDate(el, reformatDate) if reformatDate else el
 
             if fieldName == 'isDomiciledIn':
                 country = pycountry.countries.search_fuzzy(el)
@@ -403,8 +217,8 @@ class Handler(Extract, GetPages):
             elif fieldName == 'agent':
                 self.overview[fieldName] = {
                     'name': el.split('\n')[0],
-                    'mdaas:RegisteredAddress': self.get_address(returnAddress=True, addr=' '.join(el.split('\n')[1:]),
-                                                                zipPattern='[A-Z]\d[A-Z]\s\d[A-Z]\d')
+                    'mdaas:RegisteredAddress': self.getAddress(returnAddress=True, addr=' '.join(el.split('\n')[1:]),
+                                                               zipPattern='[A-Z]\d[A-Z]\s\d[A-Z]\d')
                 }
 
             elif fieldName == 'logo':
@@ -418,116 +232,219 @@ class Handler(Extract, GetPages):
             else:
                 self.overview[fieldName] = el
 
-    def fill_identifiers(self, xpathTradeRegistry=None, xpathOtherCompanyId=None,
-                         xpathInternationalSecurIdentifier=None, xpathLegalEntityIdentifier=None):
-        try:
-            temp = self.overview['identifiers']
-        except:
-            temp = {}
+    def makeDictFromString(self, link_dict):
+        link_dict = link_dict.replace("'", '"').replace("None", '"None"').replace('""', '"')
+        return json.loads(link_dict)
 
-        if xpathTradeRegistry:
-            trade = self.get_by_xpath(xpathTradeRegistry)
-            if trade:
-                temp['trade_register_number'] = re.findall('HR.*', trade[0])[0]
-        if xpathOtherCompanyId:
-            other = self.get_by_xpath(xpathOtherCompanyId)
-            if other:
-                temp['other_company_id_number'] = other[0]
-        if xpathInternationalSecurIdentifier:
-            el = self.get_by_xpath(xpathInternationalSecurIdentifier)
-            temp['international_securities_identifier'] = el[0]
-        if xpathLegalEntityIdentifier:
-            el = self.get_by_xpath(xpathLegalEntityIdentifier)
-            temp['legal_entity_identifier'] = el[0]
+    def reformatDate(self, date, format):
+        date = datetime.datetime.strptime(date.strip(), format).strftime('%Y-%m-%d')
+        return date
 
-        if temp:
-            self.overview['identifiers'] = temp
+    def getPathType(self, dataPath):
+        if dataPath[:2] == '//':
+            return 'xpath'
+        elif dataPath == 'defaultFill':
+            return 'defaultFill'
+        else:
+            return 'key'
 
-    def check_tree(self):
-        print(self.tree.xpath('//text()'))
 
-    def get_working_tree_api(self, link_name, type, method='GET', data=None):
-        if type == 'tree':
-            if data:
-                self.tree = self.get_tree(link_name,
-                                          headers=self.header, method=method, data=data)
-            else:
-                self.tree = self.get_tree(link_name,
-                                          headers=self.header, method=method)
-        if type == 'api':
-            if data:
-                # self.api = self.get_content(link_name,
-                #                             headers=self.header, method=method, data=json.dumps(data))
-                # print(self.api)
-                self.api = self.get_content(link_name,
-                                            headers=self.header, method=method, data=data)
-                # print(self.api)
-            else:
-                self.api = self.get_content(link_name,
-                                            headers=self.header, method=method)
-            # print(self.api.content)
-            self.api = self.api.content
-            # self.api = json.loads(self.api.content)
+    def getAddress(self, xpath=None, zipPattern=None, key=None, returnAddress=False, addr=None):
+        if xpath:
+            addr = self.getByXpath(xpath)
+        if key:
+            addr = self.getByApi(key)
+        if addr:
+            if type(addr) == list:
+                splittedAddr = addr
+                addr = ', '.join(addr)
 
-    def fillRatingSummary(self, xpathRatingGroup=None, xpathRatings=None):
-        temp = {}
-        if xpathRatingGroup:
-            group = self.get_by_xpath(xpathRatingGroup)
-            if group:
-                temp['rating_group'] = group[0]
-        if xpathRatings:
-            rating = self.get_by_xpath(xpathRatings)
-            if rating:
-                temp['ratings'] = rating[0].split(' ')[0]
-        if temp:
-            self.overview['rating_summary'] = temp
+            addr = addr.replace('\n', ' ')
+            addr = addr[0] if type(addr) == list else addr
+            temp = {
+                # 'fullAddress': addr,
+                'country': splittedAddr[-2]
+            }
+            if zipPattern:
+                zip = re.findall(zipPattern, addr)
+                if zip:
+                    temp['zip'] = zip[0]
 
-    def fillAgregateRating(self, xpathReview=None, xpathRatingValue=None):
-        temp = {}
-        if xpathReview:
-            review = self.get_by_xpath(xpathReview)
-            if review:
-                temp['reviewCount'] = review[0].split(' ')[0]
-        if xpathRatingValue:
-            value = self.get_by_xpath(xpathRatingValue)
-            if value:
-                temp['ratingValue'] = ''.join(value)
+            try:
+                temp['zip'] = splittedAddr[-1]
+            except:
+                pass
+            try:
+                temp['city'] = splittedAddr[-3]
+            except:
+                pass
+            try:
+                temp['streetAddress'] = ' '.join(splittedAddr[:-3])
+            except:
+                pass
+            try:
+                temp['fullAddress'] = ' '.join(splittedAddr)
+            except:
+                pass
+            try:
+                patterns = ['Suite\s\d+']
+                for pattern in patterns:
+                    pat = re.findall(pattern, addr)
+                    if pat:
+                        first_part = addr.split(pat[0])
+                        temp['streetAddress'] = first_part[0] + pat[0]
+            except:
+                pass
+            # try:
+            #     street = addr.split('Street')
+            #     # print(street)
+            #     if len(street) == 2:
+            #         temp['streetAddress'] = street[0] + 'Street'
+            #     else:
+            #         temp['streetAddress'] = ''.join(addr.split(',')[0:2])
+            #
+            #     # if temp['streetAddress']:
+            #     #     temp['streetAddress'] = splitted_addr[0]
+            # except:
+            #     pass
+            # try:
+            #     # city = addr.replace(temp['zip'], '')
+            #     # city = city.replace(temp['streetAddress'], '')
+            #     # city = city.replace(',', '').strip()
+            #     # city = re.findall('[A-Z][a-z]+', city)
+            #     temp['city'] = addr.split(', ')[-1].replace('.', '')
+            #     # temp['fullAddress'] += f", {temp['city']}"
+            # except:
+            #     pass
+            # temp['fullAddress'] += f', {temp["country"]}'
+            # temp['country'] = 'Nigeria'
 
-        if temp:
-            temp['@type'] = 'aggregateRating'
-            self.overview['aggregateRating'] = temp
+            # temp['fullAddress'] = temp['fullAddress'].replace('.,', ',')
+            if returnAddress:
+                return temp
+            self.overview['mdaas:RegisteredAddress'] = temp
 
-    def fillReviews(self, xpathReviews=None, xpathRatingValue=None, xpathDate=None, xpathDesc=None):
-        res = []
-        try:
-            reviews = self.tree.xpath(xpathReviews)
-            for i in range(len(reviews)):
-                temp = {}
-                if xpathRatingValue:
-                    ratingsValues = len(self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathRatingValue))
-                    if ratingsValues:
-                        temp['ratingValue'] = ratingsValues
-                if xpathDate:
-                    date = self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathDate)
-                    if date:
-                        temp['datePublished'] = date[0].split('T')[0]
+    def getOperationalAddress(self, xpath=None, zipPattern=None, key=None, returnAddress=False, addr=None):
+        if xpath:
+            addr = self.getByXpath(xpath)
+        if key:
+            addr = self.getByApi(key)
+        if addr:
+            if type(addr) == list:
+                splittedAddr = addr
+                addr = ', '.join(addr)
 
-                if xpathDesc:
-                    desc = self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathDesc)
-                    if desc:
-                        temp['description'] = desc[0]
-                if temp:
-                    res.append(temp)
-        except:
-            pass
-        if res:
-            self.overview['review'] = res
+            addr = addr.replace('\n', ' ')
+            addr = addr[0] if type(addr) == list else addr
+            temp = {
+                # 'fullAddress': addr,
+                'country': splittedAddr[-2]
+            }
+            if zipPattern:
+                zip = re.findall(zipPattern, addr)
+                if zip:
+                    temp['zip'] = zip[0]
+
+            try:
+                temp['zip'] = splittedAddr[-1]
+            except:
+                pass
+            try:
+                temp['city'] = splittedAddr[-3]
+            except:
+                pass
+            try:
+                temp['streetAddress'] = ' '.join(splittedAddr[:-3])
+            except:
+                pass
+            try:
+                temp['fullAddress'] = ' '.join(splittedAddr)
+            except:
+                pass
+            try:
+                patterns = ['Suite\s\d+']
+                for pattern in patterns:
+                    pat = re.findall(pattern, addr)
+                    if pat:
+                        first_part = addr.split(pat[0])
+                        temp['streetAddress'] = first_part[0] + pat[0]
+            except:
+                pass
+            # try:
+            #     street = addr.split('Street')
+            #     # print(street)
+            #     if len(street) == 2:
+            #         temp['streetAddress'] = street[0] + 'Street'
+            #     else:
+            #         temp['streetAddress'] = ''.join(addr.split(',')[0:2])
+            #
+            #     # if temp['streetAddress']:
+            #     #     temp['streetAddress'] = splitted_addr[0]
+            # except:
+            #     pass
+            # try:
+            #     # city = addr.replace(temp['zip'], '')
+            #     # city = city.replace(temp['streetAddress'], '')
+            #     # city = city.replace(',', '').strip()
+            #     # city = re.findall('[A-Z][a-z]+', city)
+            #     temp['city'] = addr.split(', ')[-1].replace('.', '')
+            #     # temp['fullAddress'] += f", {temp['city']}"
+            # except:
+            #     pass
+            # temp['fullAddress'] += f', {temp["country"]}'
+            # temp['country'] = 'Nigeria'
+
+            # temp['fullAddress'] = temp['fullAddress'].replace('.,', ',')
+            if returnAddress:
+                return temp
+            self.overview['mdaas:OperationalAddress'] = temp
+
+    def getPostAddr(self, tree):
+        addr = self.getByXpath(tree, '//span[@id="lblMailingAddress"]/..//text()', return_list=True)
+        if addr:
+            addr = [i for i in addr if
+                    i != '' and i != 'Mailing Address:' and i != 'Inactive' and i != 'Registered Office outside NL:']
+            if addr[0] == 'No address on file':
+                return None
+            if addr[0] == 'Same as Registered Office' or addr[0] == 'Same as Registered Office in NL':
+                return 'Same'
+            fullAddr = ', '.join(addr)
+            temp = {
+                'fullAddress': fullAddr if 'Canada' in fullAddr else (fullAddr + ' Canada'),
+                'country': 'Canada',
+
+            }
+            replace = re.findall('[A-Z]{2},\sCanada,', temp['fullAddress'])
+            if not replace:
+                replace = re.findall('[A-Z]{2},\sCanada', temp['fullAddress'])
+            if replace:
+                torepl = replace[0].replace(',', '')
+                temp['fullAddress'] = temp['fullAddress'].replace(replace[0], torepl)
+            try:
+                zip = re.findall('[A-Z]\d[A-Z]\s\d[A-Z]\d', fullAddr)
+                if zip:
+                    temp['zip'] = zip[0]
+            except:
+                pass
+        # print(addr)
+        # print(len(addr))
+        if len(addr) == 4:
+            temp['city'] = addr[-3]
+            temp['streetAddress'] = addr[0]
+        if len(addr) == 5:
+            temp['city'] = addr[-4]
+            temp['streetAddress'] = addr[0]
+        if len(addr) == 6:
+            temp['city'] = addr[-4]
+            temp['streetAddress'] = ', '.join(addr[:2])
+
+        return temp
 
     def fillRegulatorAddress(self, xpath=None, zipPattern=None, key=None, returnAddress=False, addr=None):
         if xpath:
-            addr = self.get_by_xpath(xpath)[1:-2]
+            addr = self.getByXpath(xpath)[1:-2]
         if key:
-            addr = self.get_by_api(key)
+            addr = self.getByApi(key)
         if addr:
             if type(addr) == list:
                 addr = ', '.join(addr)
@@ -580,77 +497,141 @@ class Handler(Extract, GetPages):
                 return temp
             self.overview['regulatorAddress'] = temp
 
-    def getOfficerFromPage(self, link, officerType):
-        self.get_working_tree_api(link, 'tree')
+
+    def getPrevNames(self, tree):
+        prev = []
+        names = self.getByXpath(tree,
+                                  '//table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="row"]//td[1]/text() | //table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="rowalt"]//td[1]/text()',
+                                return_list=True)
+        dates = self.getByXpath(tree,
+                                  '//table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="row"]//td[2]/span/text() | //table[@id="tblPreviousCompanyNames"]//tr[@class="row"]//tr[@class="rowalt"]//td[2]/span/text()',
+                                return_list=True)
+        print(names)
+        if names:
+            names = [i for i in names if i != '']
+        if names and dates:
+            for name, date in zip(names, dates):
+                temp = {
+                    'name': name,
+                    'valid_to': date
+                }
+                prev.append(temp)
+        return prev
+
+    def fillOverviewIdentifiers(self, xpathTradeRegistry=None, xpathOtherCompanyId=None,
+                                xpathInternationalSecurIdentifier=None, xpathLegalEntityIdentifier=None):
+        try:
+            temp = self.overview['identifiers']
+        except:
+            temp = {}
+
+        if xpathTradeRegistry:
+            trade = self.getByXpath(xpathTradeRegistry)
+            if trade:
+                temp['trade_register_number'] = re.findall('HR.*', trade[0])[0]
+        if xpathOtherCompanyId:
+            other = self.getByXpath(xpathOtherCompanyId)
+            if other:
+                temp['other_company_id_number'] = other[0]
+        if xpathInternationalSecurIdentifier:
+            el = self.getByXpath(xpathInternationalSecurIdentifier)
+            temp['international_securities_identifier'] = el[0]
+        if xpathLegalEntityIdentifier:
+            el = self.getByXpath(xpathLegalEntityIdentifier)
+            temp['legal_entity_identifier'] = el[0]
+
+        if temp:
+            self.overview['identifiers'] = temp
+
+    def fillBusinessClassifier(self, xpathCodes=None, xpathDesc=None, xpathLabels=None, api=False):
+        res = []
+        length = None
+        codes, desc, labels = None, None, None
+
+        if xpathCodes:
+            codes = self.getByXpath(xpathCodes) if not api else [self.getByApi(xpathCodes)]
+            if codes:
+                length = len(codes)
+        if xpathDesc:
+            desc = self.getByXpath(xpathDesc) if not api else [self.getByApi(xpathDesc)]
+            if desc:
+                length = len(desc)
+        if xpathLabels:
+            labels = self.getByXpath(xpathLabels) if not api else [self.getByApi(xpathLabels)]
+            if labels:
+                length = len(labels)
+
+        if length:
+            for i in range(length):
+                temp = {
+                    'code': codes[i] if codes else '',
+                    'description': desc[i] if desc else '',
+                    'label': labels[i] if labels else ''
+                }
+                res.append(temp)
+        if res:
+            self.overview['bst:businessClassifier'] = res
+
+
+    def fillRatingSummary(self, xpathRatingGroup=None, xpathRatings=None):
         temp = {}
-        temp['name'] = self.get_by_xpath('//div[@class="form-group"]//strong[2]/text()')[0]
+        if xpathRatingGroup:
+            group = self.getByXpath(xpathRatingGroup)
+            if group:
+                temp['rating_group'] = group[0]
+        if xpathRatings:
+            rating = self.getByXpath(xpathRatings)
+            if rating:
+                temp['ratings'] = rating[0].split(' ')[0]
+        if temp:
+            self.overview['rating_summary'] = temp
 
-        temp['type'] = officerType
-        addr = ','.join(self.get_by_xpath('//div[@class="MasterBorder"]//div[2]//div/text()')[:-1])
-        if addr:
-            temp['address'] = {
-                'address_line_1': addr,
-            }
-            zip = re.findall('\d\d\d\d\d-\d\d\d\d', addr)[0]
-            if zip:
-                temp['address']['postal_code'] = zip
-                temp['address']['address_line_1'] = addr.split(zip)[0]
-
-        temp['officer_role'] = 'PRODUCER' if officerType == 'individual' else 'COMPANY'
-
-        temp['status'] = \
-            self.get_by_xpath('//td//text()[contains(., "License Status")]/../../following-sibling::td//text()')[0]
-
-        temp['information_source'] = self.base_url
-        temp['information_provider'] = 'Idaho department of Insurance'
-        return temp if temp['status'] == 'Active' else None
-
-    def getHiddenValuesASP(self):
-        names = self.get_by_xpath('//input[@type="hidden"]/@name')
+    def fillAgregateRating(self, xpathReview=None, xpathRatingValue=None):
         temp = {}
-        for name in names:
-            value = self.get_by_xpath(f'//input[@type="hidden"]/@name[contains(., "{name}")]/../@value')
-            temp[name] = value[0] if value else ''
-        return temp
+        if xpathReview:
+            review = self.getByXpath(xpathReview)
+            if review:
+                temp['reviewCount'] = review[0].split(' ')[0]
+        if xpathRatingValue:
+            value = self.getByXpath(xpathRatingValue)
+            if value:
+                temp['ratingValue'] = ''.join(value)
 
-    def makeDictFromString(self, link_dict):
-        link_dict = link_dict.replace("'", '"').replace("None", '"None"').replace('""', '"')
-        return json.loads(link_dict)
+        if temp:
+            temp['@type'] = 'aggregateRating'
+            self.overview['aggregateRating'] = temp
 
-    def extractData(self, requiredFields, hardCodedFields):
-        for k, v in requiredFields.items():
-            self.fillField(k, v)
+    def fillReviews(self, xpathReviews=None, xpathRatingValue=None, xpathDate=None, xpathDesc=None):
+        res = []
+        try:
+            reviews = self.tree.xpath(xpathReviews)
+            for i in range(len(reviews)):
+                temp = {}
+                if xpathRatingValue:
+                    ratingsValues = len(self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathRatingValue))
+                    if ratingsValues:
+                        temp['ratingValue'] = ratingsValues
+                if xpathDate:
+                    date = self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathDate)
+                    if date:
+                        temp['datePublished'] = date[0].split('T')[0]
 
-        for k, v in hardCodedFields.items():
-            self.overview[k] = v
+                if xpathDesc:
+                    desc = self.tree.xpath(f'//async-list//review[{i + 1}]' + xpathDesc)
+                    if desc:
+                        temp['description'] = desc[0]
+                if temp:
+                    res.append(temp)
+        except:
+            pass
+        if res:
+            self.overview['review'] = res
 
 
-    def get_overview(self, link):
-        self.overview = {}
-        self.get_working_tree_api(link, 'tree')
-
-        requiredFieldsMap = {
-            'isDomiciledIn': '//text()[contains(., "Headquarters Country")]/../following-sibling::div[1]//text()',
-            'vcard:organization-name': '//h1/a/text()',
-            'hasLatestOrganizationFoundedDate': '//text()[contains(., "Founded Year")]/../following-sibling::div[1]//text()',
-            'logo': '//div[@class="clearfix col-sm-12 field field--name-field-company-logo-lc field--type-image field--label-hidden field--item"]/a/img/@src',
-            'hasURL': '//text()[contains(., "Company Website:")]/../following-sibling::div[1]/a/@href',
-            'bst:description': '//text()[contains(., "About Company Business:")]/../following-sibling::div[1]//text()',
-            'registeredIn': '//text()[contains(., "Headquarters Region")]/../following-sibling::div[1]//text()',
-            'bst:stock_info': '//text()[contains(., "Stock Exchange")]/../following-sibling::div[1]//text()',
-            'size': '//text()[contains(., "Number of Employees")]/../following-sibling::div[1]//text()',
-            'Service': '//div[@class="clearfix group-left"]/div//text()[contains(., "Company Business")]/../following-sibling::div[1]//text()',
-        }
-
-        hardCodedFields = {
-            'bst:registryURI': link
-        }
-        self.extractData(requiredFieldsMap, hardCodedFields)
-        return self.overview
 
     def get_officership(self, link):
         off = []
-        self.get_working_tree_api(link, 'tree')
+        self.setWorkingTreeApi(link, 'tree')
     #
     #     url = 'https://englishdart.fss.or.kr/dsbc002/main.do'
     #     data = {
@@ -661,9 +642,9 @@ class Handler(Extract, GetPages):
     #
     #     # link_name = link_name.replace("'",'"').replace("None", '"None"')
     #     # self.api =json.loads(link_name)
-        ceo = self.get_by_xpath(
+        ceo = self.getByXpath(
             '//text()[contains(., "CEO:")]/../following-sibling::div[1]//text()')
-        founders = self.get_by_xpath(
+        founders = self.getByXpath(
             '//text()[contains(., "Founders")]/../following-sibling::div[1]//text()')
     #
         try:
@@ -1043,14 +1024,42 @@ class Handler(Extract, GetPages):
     #     # print(sholdersl1)
     #     return edd, sholdersl1
     #
+
+    def getOfficerFromPage(self, link, officerType):
+        self.setWorkingTreeApi(link, 'tree')
+        temp = {}
+        temp['name'] = self.getByXpath('//div[@class="form-group"]//strong[2]/text()')[0]
+
+        temp['type'] = officerType
+        addr = ','.join(self.getByXpath('//div[@class="MasterBorder"]//div[2]//div/text()')[:-1])
+        if addr:
+            temp['address'] = {
+                'address_line_1': addr,
+            }
+            zip = re.findall('\d\d\d\d\d-\d\d\d\d', addr)[0]
+            if zip:
+                temp['address']['postal_code'] = zip
+                temp['address']['address_line_1'] = addr.split(zip)[0]
+
+        temp['officer_role'] = 'PRODUCER' if officerType == 'individual' else 'COMPANY'
+
+        temp['status'] = \
+            self.getByXpath('//td//text()[contains(., "License Status")]/../../following-sibling::td//text()')[0]
+
+        temp['information_source'] = self.base_url
+        temp['information_provider'] = 'Idaho department of Insurance'
+        return temp if temp['status'] == 'Active' else None
+
+
+
     def get_financial_information(self, link):
-        self.get_working_tree_api(link, 'tree')
-        total_assets = self.get_by_xpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[2]/text()')
-        revenue = self.get_by_xpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]/../../following-sibling::table[1]//tr[3]//td[2]/text()')
-        date = self.get_by_xpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[1]/text()')
-        market_capitalization = self.get_by_xpath('//text()[contains(., "Market Cap ")]/../following-sibling::div[1]//text()')
-        total_liabilities = self.get_by_xpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[3]/text()')
-        profit = self.get_by_xpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]/../../following-sibling::table[1]//tr[3]//td[4]/text()')
+        self.setWorkingTreeApi(link, 'tree')
+        total_assets = self.getByXpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[2]/text()')
+        revenue = self.getByXpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]/../../following-sibling::table[1]//tr[3]//td[2]/text()')
+        date = self.getByXpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[1]/text()')
+        market_capitalization = self.getByXpath('//text()[contains(., "Market Cap ")]/../following-sibling::div[1]//text()')
+        total_liabilities = self.getByXpath('//text()[contains(., "Balance Sheet Summary - in ")]/../../following-sibling::table[1]//tr[3]//td[3]/text()')
+        profit = self.getByXpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]/../../following-sibling::table[1]//tr[3]//td[4]/text()')
         # period = ''
         # print(total_assets, revenue, date, market_capitalization, total_liabilities, profit)
 
@@ -1084,7 +1093,7 @@ class Handler(Extract, GetPages):
 
         temp = {}
         try:
-            name = self.get_by_xpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]')
+            name = self.getByXpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]')
             if 'Billion' in name[0]:
                 mult = 1000000000
             else:
@@ -1101,7 +1110,7 @@ class Handler(Extract, GetPages):
             pass
 
         try:
-            name = self.get_by_xpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]')
+            name = self.getByXpath('//text()[contains(., "Annual\xa0Results - Revenue and Net Profit")]')
             if 'Billion' in name[0]:
                 mult = 1000000000
             else:
@@ -1112,7 +1121,6 @@ class Handler(Extract, GetPages):
             pass
 
 
-        print(temp)
         income = temp
 
 

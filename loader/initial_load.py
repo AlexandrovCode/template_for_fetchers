@@ -27,4 +27,5 @@ class Loader:
         self.__updateImport()
 
 loader = Loader(input('Enter new project name: '))
+
 loader.loaderUpdateFiles()
