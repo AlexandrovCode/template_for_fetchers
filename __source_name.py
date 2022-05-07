@@ -1,6 +1,6 @@
+from source_name import *
 import time
 import json
-from source_name import *
 
 if __name__ == '__main__':
     start_time = time.time()
