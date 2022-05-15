@@ -1,11 +1,12 @@
 from source_name import *
+from src.configs.source_config import Config
 import time
 import json
 
 if __name__ == '__main__':
     start_time = time.time()
 
-    a = Handler()
+    a = Handler(Config())
     # final_data = a.Execute('aHR0cHM6Ly93d3cudmFsdWUudG9kYXkvY29tcGFueS9hbC1yYWpoaS1iYW5raW5nLWFuZC1pbnZlc3RtZW50LWNvcnBvcmF0aW9u=',
     #                        'Financial_Information', '', '')
     final_data = a.Execute('Bank','','','')
