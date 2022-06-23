@@ -52,7 +52,7 @@ class Zipper:
         copy_tree(fromPath, targetPath)
 
     def make_zip(self):
-        outputFileName = self.projectName + f'_{self.current_version}'
+        outputFileName = self.projectName + f'_v{self.current_version}'
         out = os.path.join(self.base_dir, outputFileName)
         shutil.make_archive(out, 'zip', self.path)
 

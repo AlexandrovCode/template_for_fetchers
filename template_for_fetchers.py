@@ -12,7 +12,8 @@ from src.bstsouecepkg.extract import GetPages
 
 
 class Handler(Extract, GetPages):
-    base_url = 'https://kemenperin.go.id/'
+    base_url = 'https://www.directinfo.ma/'
+    NICK_NAME = base_url.split('//')[-1][:-1].replace('www.', '')
 
     header = {
         'User-Agent':
@@ -21,7 +22,7 @@ class Handler(Extract, GetPages):
             'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;'
             'q=0.8,application/signed-exchange;v=b3;q=0.9;application/json;application/json;odata=verbose',
         'accept-language': 'en-US,en;q=0.9,ru-RU;q=0.8,ru;q=0.7',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8; text/html;',
     }
 
     defaultRequestOptions = {
@@ -29,12 +30,9 @@ class Handler(Extract, GetPages):
         'method': 'GET',
         'headers': header,
         'data': None,
-        'returnType': 'tree'
+        'returnType': 'api',
+        'allow_redirects': True,
     }
-
-    defaultMethod = 'GET'
-    defaultData = None
-    defaultReturnType = 'tree'
 
     fields = ['overview',
               # 'officership',
@@ -43,7 +41,7 @@ class Handler(Extract, GetPages):
               # 'Financial_Information'
               ]
 
-    NICK_NAME = base_url.split('//')[-1][:-1]
+
 
     overview = {}
 
@@ -74,6 +72,7 @@ class Handler(Extract, GetPages):
         'NULL',
         'None Supplied',
         'Telp.',
+        None,
     ]
 
     badSymbols = ['\\u00', '\\u00e9', '\\u00e0', '\\u00e8']
@@ -82,54 +81,93 @@ class Handler(Extract, GetPages):
                          'mdaas:RegisteredAddress']
 
     def getpages(self, searchquery):
-        self.get_initial_page(searchquery)
-        companies = self.get_result_list_by_path('//div[@class="row"]//table//tr/td[2]//b[1]//text()')
+        extractedData = self.get_initial_page(searchquery)
+
+        extractedData = extractedData[0]
+
+        companies = self.get_companies_identities_from(extractedData, 'api: denomination')
+
         return companies
 
     def get_initial_page(self, searchquery):
         searchquery = self.makeUrlFriendlySearchQuery(searchquery)
-        link = f'https://kemenperin.go.id/direktori-perusahaan?what={searchquery}'
+
+        link = f'https://www.directinfo.ma/directinfo-backend/api/queryDsl/search/{searchquery}'
         requestOptions = {
             'url': link,
             'method': 'GET',
             # 'headers': '',
             # 'data': data,
-            # 'returnType': 'api'
+            'returnType': 'api'
         }
-        self.getDataFromPage(requestOptions)
+        return self.getDataFromPage(requestOptions)
+
+    def get_companies_identities_from(self, extractedData, path):
+        pathType = self.get_path_type(path)
+        companiesIdentities = self.extract_element_based_on_type(pathType, path, extractedData)
+
+        for company in extractedData:
+            companiesIdentities.append(company['denomination'])
+        return companiesIdentities
+
+    def collect_data_from_several_links(self, links, searchquery):
+        companiesList = []
+        for link in links:
+            self.get_initial_page(searchquery, link)
+            companies = self.get_elements_list_by_path(
+                f'//div[@class="row"]//table//tr/td[1]/text()[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "{searchquery.lower()}")]/../..')
+            if companies:
+                for company in companies:
+                    fetchedFields = {
+                        'vcard:organization-name': ['./td[1]//text()'],
+                        'legislationidentifier': ['./td[3]//text()'],
+                    }
+
+                    hardcodedFields = {
+                        '@source-id': self.base_url.replace('www.', ''),
+                        'isDomiciledIn': 'CA',
+                        'regulator_name': 'Digital Government and Service NL',
+                        'regulatorAddress': {
+                            'fullAddress': '10th. Floor, East Block Confederation Building St. John’s, NL A1B 4J6, Canada',
+                            'city': 'NL',
+                            'country': 'Canada'
+                        },
+                        'regulator_url': self.base_url
+                    }
+                    companyData = self.extract_data(fetchedFields, hardcodedFields, company)
+                    companiesList.append(companyData)
+        return companiesList
+
+    def get_csrf_token(self, name):
+        return self.get_by_xpath(f'//input[@name="{name}"]/@value')
 
     def makeUrlFriendlySearchQuery(self, searchquery):
         return urllib.parse.quote_plus(searchquery)
 
     def getDataFromPage(self, requestOptions):
-        currentRequestOptions = self.createCurrentRequestOptions(requestOptions)
+        def createCurrentRequestOptions(requestOptions):
+            defaultRequestOptions = dict(self.defaultRequestOptions)
+            for k, v in requestOptions.items():
+                defaultRequestOptions[k] = v
+            return defaultRequestOptions
+        currentRequestOptions = createCurrentRequestOptions(requestOptions)
 
         content = self.get_content(
-            currentRequestOptions['url'],
-            currentRequestOptions['headers'],
-            currentRequestOptions['data'],
-            currentRequestOptions['method']).content
+            url=currentRequestOptions['url'],
+            headers=currentRequestOptions['headers'],
+            data=currentRequestOptions['data'],
+            method=currentRequestOptions['method'],
+            allow_redirects=currentRequestOptions['allow_redirects']).content
 
         if currentRequestOptions['returnType'] == 'tree':
-            self.extractedData = etree.HTML(content)
+            extractedData = etree.HTML(content)
+            self.extractedData = extractedData
         if currentRequestOptions['returnType'] == 'api':
-            self.extractedData = json.loads(content)
+            extractedData = json.loads(content)
 
-        return self.extractedData
+        return extractedData
 
-    def createCurrentRequestOptions(self, requestOptions):
-        defaultRequestOptions = dict(self.defaultRequestOptions)
-        for k, v in requestOptions.items():
-            defaultRequestOptions[k] = v
-        return defaultRequestOptions
 
-    def get_result_list_by_path(self, pathToResultList):
-        outputType = self.get_path_type(pathToResultList)
-        if outputType == 'api':
-            pathToResultList = pathToResultList.split('api: ')[-1]
-            return self.get_dict_value_by_path(pathToResultList, self.extractedData)
-        if outputType == 'tree':
-            return self.get_by_xpath(pathToResultList)
 
     def get_path_type(self, dataPath):
         if type(dataPath) == list:
@@ -146,20 +184,40 @@ class Handler(Extract, GetPages):
         else:
             return 'rawElement'
 
-    def get_dict_value_by_path(self, path, dictData):
-        resultValue = dict(dictData)
-        path = path.split('/')
-        if path == ['']:
-            return [self.extractedRawDict]
-        for i in path:
-            if type(resultValue) == list:
-                resultValue = resultValue[0]
-            try:
-                resultValue = resultValue[i]
-            except Exception as e:
-                # print(e)
-                return None
-        return resultValue
+    def get_company_value_by_api_path(self, path, dictData):
+        path = path.replace('api: ', '')
+
+        def isListOfDictionaries(dictData):
+            return len(dictData) > 1 and type(dictData) == list
+
+        def extractSingleCompanyValueFromApiPath(dictData, path):
+            resultValue = dict(dictData)
+            path = path.split('/')
+            if path == ['']:
+                return [dictData]
+            for i in path:
+                if type(resultValue) == list:
+                    resultValue = resultValue[0]
+                try:
+                    resultValue = resultValue[i]
+                except Exception as e:
+                    # print(e)
+                    return None
+            return resultValue
+
+        def extractMultipleCompaniesValueFromApiPath(dictData, path):
+            companiesIdentities = []
+            for companyData in dictData:
+                companyIdentity = extractSingleCompanyValueFromApiPath(companyData, path)
+                companiesIdentities.append(companyIdentity)
+            return companiesIdentities
+
+        if isListOfDictionaries(dictData):
+            companiesIdentities = extractMultipleCompaniesValueFromApiPath(dictData, path)
+            return companiesIdentities
+        else:
+            companyIdentity = extractSingleCompanyValueFromApiPath(dictData, path)
+            return companyIdentity
 
     def get_companies_value(self, linkPath, listData):
         companyLinks = []
@@ -194,8 +252,29 @@ class Handler(Extract, GetPages):
         return temp
 
     def get_overview(self, link):
-        path = f"//div[@class='row']//table//tr/td[2]//b[1]//text()[contains(., '{link}')]/../../.."
-        companyInformation = self.find_company_on_the_page(path)
+        self.get_initial_page(link)
+
+        # self.get_initial_page(link)  # divide on extract by founding name on page or by separate link
+        requestOptions = {
+            'url': link,
+        }
+        extractedData = self.get_initial_page(link)
+        companyInformation = extractedData[0][0]
+        companyId = companyInformation['id']
+
+        link2 = f'https://www.directinfo.ma/directinfo-backend/api/entreprise/{companyId}'
+        requestOptions = {
+            'url': link2,
+        }
+        extractedData = self.getDataFromPage(requestOptions)
+        companyInformation = extractedData
+        # self.getDataFromPage(requestOptions)
+
+        # path = f"//div[@class='row']//table//tr/td[2]//b[1]//text()[contains(., '{link}')]/../../.."
+        # companyInformation = self.find_company_on_the_page(path)
+
+
+        # print(companyInformation)
 
         def extraHandlingCode(code):
             return code.split(' - ')[0]
@@ -212,13 +291,15 @@ class Handler(Extract, GetPages):
             return label[2:]
 
         def extraHandlingIsIncorporatedIn(date):
-            return date.split('T')[0]
+            if date:
+                date = int(date[:-3])
+                # print(date)
+                return str(datetime.datetime.fromtimestamp(date)).split(' ')[0]
+            return ''
 
         def extraHandlingCountry(country):
             if country == '':
-                return 'Indonesia'
-            else:
-                return 'WORKS!'
+                return 'Rwanda'
 
         def extraHandlingStreetAddress(addr):
             add = addr.split(', ')
@@ -235,35 +316,57 @@ class Handler(Extract, GetPages):
                 return ''
 
         def extraHandlingFullAddress(fullAddress):
-            return fullAddress + ', Indonesia'
+            if fullAddress:
+                return fullAddress + ', Rwanda'
+            else:
+                return 'Rwanda'
+
 
         fetchedFields = {
-            'mdaas:RegisteredAddress': {
-                'country': ['', extraHandlingCountry],
-                'streetAddress': ['./td[2]/b/following-sibling::text()[1]', extraHandlingStreetAddress],
-                'city': ['./td[2]/b/following-sibling::text()[1]', extraHandlingCity],
-                'fullAddress': ['./td[2]/b/following-sibling::text()[1]', extraHandlingFullAddress],
+            'hasActivityStatus': ['api: etatEntreprise'],
+            'isIncorporatedIn': ['api: dateImmatriculation', extraHandlingIsIncorporatedIn],
+            'identifiers': {
+                'other_company_id_number': ['api: numeroICE']
             },
-            'tr-org:hasRegisteredPhoneNumber': ['./td[2]//text()[2]', lambda x: x.split('Telp.')[-1][1:]],
-            'vcard:organization-name': ['./td[2]//b[1]//text()']
+            'lei:legalForm': {
+                'code': [''],
+                'label': ['api: formeJuridique'],
+            },
+            'bst:registrationId': ['api: numeroRC'],
+            'Service': {
+                'serviceType': ['api: activite'],
+            }
+            # 'tr-org:hasRegisteredPhoneNumber': [
+            #     '//div[@class="content"]//div[@class="text"]//i[@class="fal fa-phone"]/following-sibling::div//text()',
+            #     lambda x: x[-1] if type(x) == list else x],
+            # 'vcard:organization-name': ['//div[@class="content"]//h4/text()'],
+            # 'hasURL': [
+            #     '//div[@class="content"]//div[@class="text"]//i[@class="fal fa-globe"]/following-sibling::div//text()'],
+            # 'bst:email': [
+            #     '//div[@class="content"]//div[@class="text"]//i[@class="fal fa-envelope"]/following-sibling::div//text()'],
+            # 'mdaas:RegisteredAddress': {
+            #     'country': ['', extraHandlingCountry],
+            #     'streetAddress': [
+            #         '//div[@class="content"]//div[@class="text"]//i[@class="fal fa-home"]/following-sibling::div//text()'],
+            #     'fullAddress': [
+            #         '//div[@class="content"]//div[@class="text"]//i[@class="fal fa-home"]/following-sibling::div//text()',
+            #         extraHandlingFullAddress]
+            # },
+            # 'map': ['//div[@class="map"]/iframe/@src']
         }
 
         hardcodedFields = {
-            '@source-id': self.base_url,
-            'isDomiciledIn': 'ID',
-            'regulator_name': 'Kementerian Perindustrian REPUBLIK INDONESIA',
-            'regulator_url': self.base_url,
-            'RegulationStatus': 'Authorised',
-            'regulatorAddress': {
-                'fullAddress': 'Jl. Gatot Subroto Kav. 52-53 Jakarta Selatan 12950, Indonesia',
-                'city': 'Jakarta',
-                'country': 'Indonesia'
-            }
-            # 'bst:sourceLinks': ['http://www.gufebenin.org/index.php/entreprises'],
+            'vcard:organization-name': link,
+            '@source-id': self.NICK_NAME,
+            'isDomiciledIn': 'MA',
+            'bst:registryURI': self.base_url + 'fiche-detail/' + str(companyInformation['id']) + '/' + companyInformation['denomination'].replace(' ','-'),
+            'bst:sourceLinks': [self.base_url + 'fiche-detail/' + str(companyInformation['id']) + '/' + companyInformation['denomination'].replace(' ','-')],
         }
 
-        return self.extract_data(fetchedFields, hardcodedFields, companyInformation)
-
+        result = self.extract_data(fetchedFields, hardcodedFields, companyInformation)
+        # print(result)
+        # exit()
+        return result
 
     def find_company_on_the_page(self, path):
         elementWithInfo = self.extractedData.xpath(path)
@@ -274,9 +377,8 @@ class Handler(Extract, GetPages):
 
     def extract_data(self, extractingFields, hardCodedFields, companyInformation):
         fetchedFieldsData = {}
-        self.extractedData = companyInformation
 
-        fetchedFields = self.recursive_filling_dict(extractingFields)
+        fetchedFields = self.recursive_filling_dict(extractingFields, companyInformation)
 
         for k, v in hardCodedFields.items():
             fetchedFieldsData[k] = v
@@ -285,48 +387,46 @@ class Handler(Extract, GetPages):
 
         return fetchedFieldsData
 
-    def get_filled_value(self, data):
-        extractingPath = data[0]
-
-        typeOfData = self.get_path_type(extractingPath)
-
-        element = self.extract_element_based_on_type(typeOfData, extractingPath)
-
-        if len(data) == 2:
-            handlingFunction = data[1]
-            element = handlingFunction(element)
-        return element
-
-
-    def extract_element_based_on_type(self, typeOfData, extractingPath):
-        if typeOfData == 'tree':
-            el = self.get_by_xpath(extractingPath)
-        if typeOfData == 'api':
-            el = self.get_dict_value_by_path(extractingPath, self.extractedData)
-        if typeOfData == 'rawElement':
-            el = extractingPath
-
-        if type(el) == list and len(el) == 1:
-            el = el[0]
-
-        el = self.getCleanValues(el)
-
-        return el
-
-    def recursive_filling_dict(self, data):
+    def recursive_filling_dict(self, data, extractedData):
         if type(data) == dict:
             newDict = {}
             for k, v in data.items():
                 if type(v) == dict:
-                    value = self.recursive_filling_dict(v)
+                    value = self.recursive_filling_dict(v, extractedData)
                 else:
-                    value = self.get_filled_value(v)
-                if value:
+                    value = self.get_filled_value(v, extractedData)[0]
+                    typeOfData = self.get_filled_value(v, extractedData)[1]
+                if value or typeOfData == 'rawElement':
                     newDict[k] = value
             return newDict
         else:
-            value = self.get_filled_value(data)
+            value = self.get_filled_value(data, extractedData)
             return value
+
+    def get_filled_value(self, data, extractedData):
+        extractingPath = data[0]
+
+        typeOfData = self.get_path_type(extractingPath)
+        element = self.extract_element_based_on_type(typeOfData, extractingPath, extractedData)
+
+        if len(data) == 2:
+            handlingFunction = data[1]
+            element = handlingFunction(element)
+        return [element, typeOfData]
+
+    def extract_element_based_on_type(self, typeOfData, extractingPath, extractedData):
+        if typeOfData == 'tree':
+            el = self.get_by_xpath(extractingPath)
+        if typeOfData == 'api':
+            el = self.get_company_value_by_api_path(extractingPath, extractedData)
+        if typeOfData == 'rawElement':
+            el = extractingPath
+        if type(el) == list and len(el) == 1:
+            el = el[0]
+        if el:
+            el = self.getCleanValues(el)
+
+        return el
 
     def fill_field(self, fieldName, data):
         el = self.recursive_filling_dict(data)
@@ -349,13 +449,24 @@ class Handler(Extract, GetPages):
         return date
 
     def getCleanValues(self, values):
+        def removeBadSymbols(value):
+            string_encode = value.encode("ascii", "ignore")
+            string_decode = string_encode.decode()
+
+            value = string_decode.split(' ')
+            value = [i.strip() for i in value if i.strip()]
+            value = ' '.join(value)
+            return value
+
         cleanValues = []
+        if type(values) == int:
+            values = str(values)
         if type(values) == str:
             values = [values]
 
         for value in values:
             if not self.isForbiddenValue(value):
-                value = self.removeBadSymbols(value)
+                value = removeBadSymbols(value)
                 cleanValues.append(value)
 
         if type(cleanValues) == list and len(cleanValues) == 1:
@@ -365,37 +476,44 @@ class Handler(Extract, GetPages):
     def isForbiddenValue(self, value):
         return value in self.forbiddenValues
 
-    def removeBadSymbols(self, value):
-        string_encode = value.encode("ascii", "ignore")
-        string_decode = string_encode.decode()
-
-        value = string_decode.split(' ')
-        value = [i.strip() for i in value if i.strip()]
-        value = ' '.join(value)
-        return value
-
     def get_officership(self, link):
-        off = []
-        link = 'https://aleph.occrp.org/api/2/entities/' + link
-        expandedLink = link + '/expand'
-        self.apiFetcher.extract_data(expandedLink)
-        self.apiFetcher.transfer_to_json()
-        y = self.apiFetcher.get_companies_list_by_path('results')
-        for i in y:
-            if i['property'] == 'ownershipAsset':
-                entities = i['entities']
-                for ent in entities:
-                    if ent['schema'] == 'LegalEntity':
-                        owner = ent['properties']['name']
-                        off.append({'name': owner[0],
-                                    'type': 'individual',
-                                    'officer_role': 'owner',
-                                    'status': 'Active',
-                                    'occupation': 'owner',
-                                    # 'information_source': self.base_url,
-                                    # 'information_provider': 'Value Today'
-                                    })
-        return off
+        requestOptions = {
+            'url': link
+        }
+        self.getDataFromPage(requestOptions)
+
+        officersElements = self.get_elements_list_by_path('//div[@class="item-person"]')
+
+        if not officersElements:
+            return []
+
+        fetchedFields = {
+            'name': ['./div/div[@class="contacts-unit-title"]/text()'],
+            'occupation': ['./div/div[@class="proffession"]/text()'],
+            'officer_role': ['./div/div[@class="proffession"]/text()'],
+        }
+
+        hardcodedFields = {
+            'type': 'Individual',
+            'status': 'Active',
+            'country': 'Rwanda',
+            'information_source': self.base_url,
+            'information_provider': 'RRA Rwanda Revenue Authority'
+        }
+
+        return self.extract_officers(fetchedFields, hardcodedFields, officersElements)
+
+    def get_elements_list_by_path(self, path):
+        elements = self.extractedData.xpath(path)
+        return elements or None
+
+    def extract_officers(self, fetchedFields, hardcodedFields, officersElements):
+        officers = []
+        for officerElement in officersElements:
+            officer = self.extract_data(fetchedFields, hardcodedFields, officerElement)
+            if officer:
+                officers.append(officer)
+        return officers
 
     def get_documents(self, link):
         docs = []
